@@ -90,13 +90,13 @@ Generate a prometheus.yml file with
 ./config.py --prometheus
 ```
 
-copy this file into your prometheus server, which if you are following this guide is:
+Copy this file into your prometheus server, which if you are following this guide is:
 ```
 cp prometheus.yml /etc/prometheus/
 systemctl restart prometheus
 ```
 
-
+Log into the active anvil and enable exporters on the cluster with the following command: `cluster-config --prometheus-exporters-enable`
 
 ## Troubleshooting
 
