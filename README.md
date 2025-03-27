@@ -4,7 +4,56 @@ Grafana dashboards for use with the prometheus exporters built into Hammerspace
 The 5.1 directory is used for Hammerspace releases 5.1 and newer
 The 5.0 directory is used for Hammerspace release 5.0
 
-Original dashboards are exported from Grafana 11 and soon to be 11.4
+Original dashboards are exported from Grafana 11.4
+
+
+# Overview
+
+Typical deployment has Prometheus and Grafana running on the same node.
+Grafana talks to Prometheus so traffic between the two stays within the node in
+this configuration.
+
+Prometheus reaches out to each of the exporters on the nodes to be monitored
+and pulls the metrics, storing the metrics in its time series DB.  Grafana
+queries the Prometheus DB and generates the graphs.
+
+The exporters are provided on the Hammerspace nodes, but do need to be enabled.
+
+```
+                            +--------------------------+
+                            |     Monitoring Node      |
+                            |          Grafana         |
+                            |             |            |
+                            |        Prometheus        |
+                            |             |            |
+                            +-------------+------------+
+                                          |
+                                          |
+                                          |
+               Hammerspace1               |             Hammerspace2
+                  Anvil 1          <------|------>         Anvil 1
+           Prometheus Exporters           |          Prometheus Exporters
+                                          |
+                                          |
+                Hammerspace1              |              Hammerspace2
+                  Anvil 2          <------|------>         Anvil 2
+           Prometheus Exporters           |          Prometheus Exporters
+                                          |
+                                          |
+                                          |
+                Hammerspace1              |              Hammerspace2
+                   DSX 1           <------|------>          DSX 1
+           Prometheus Exporters           |          Prometheus Exporters
+                                          |
+                                          |
+                    ...                   |                  ...
+                                          |
+                                          |
+                Hammerspace1              |              Hammerspace2
+                   DSX $n          <------|------>          DSX $n
+           Prometheus Exporters           |          Prometheus Exporters
+
+```
 
 # Configuration / install scripts
 
@@ -36,12 +85,12 @@ Go to http://<grafana_host>:3000/ and login to grafana, default is typically adm
 
 Go to _Administration -> Users and Access -> Service Accounts_ and add a service account with _Admin_ role
 
-Now click on the new service account, then click _Add service account token_ (a blue button).  
+Now click on the new service account, then click _Add service account token_ (a blue button).
 Add the generated token in to the `token` in `config_tooling.ini` file generated in the previous step
 
 ### Upload dashboards
 
-To set up the prometheus data source and auto upload the hammerspace provided dashboards, use 
+To set up the prometheus data source and auto upload the hammerspace provided dashboards, use
 ```
 $ ./config.py --dashboards
 ```
@@ -100,7 +149,7 @@ Log into the active anvil and enable exporters on the cluster with the following
 
 ## Troubleshooting
 
-In grafana, 
+In grafana,
 
 go to the global datasources, select Prometheus.
 1) Verify it is the default data source
