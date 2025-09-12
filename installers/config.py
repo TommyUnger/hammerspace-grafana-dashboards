@@ -5,6 +5,7 @@
 
 import os
 import sys
+import time
 import argparse
 import pathlib
 import configparser
@@ -96,6 +97,7 @@ def install_dashboards_from_path(args, folder_id, path_glob):
 
         # Make sure there's a UID
         uid = dashboard_json.get('uid')
+        print(f"Setting up dashboard: {dashboard_json.get('title')}")
         if not uid:
             print(f"Warning: Dashboard {json_file} has no UID. Grafana will generate one if missing.")
             print('Aborting')
@@ -113,7 +115,7 @@ def install_dashboards_from_path(args, folder_id, path_glob):
                 continue
 
         # Now upload (create or update) the dashboard
-        post_url = f"{GRAFANA_URL}/api/dashboards/db"
+        post_url = f"{GRAFANA_URL}/api/dashboards/import"
         payload = {
             "dashboard": dashboard_json,
             "folderId": folder_id,
@@ -128,6 +130,7 @@ def install_dashboards_from_path(args, folder_id, path_glob):
                     "value": GRAFANA_PROMETHEUS_UID,
                 }]
         }
+        # print(f"Posting data: {payload.get('folderId')} {payload.get('inputs')}")
         resp = GRAFANA_SESSION.post(post_url, data=json.dumps(payload))
         if resp.status_code not in (200, 202):  # Typically 200 OK or 202 Accepted
             print(f"Error installing dashboard from {json_file}: {resp.text}")
@@ -135,11 +138,26 @@ def install_dashboards_from_path(args, folder_id, path_glob):
             print(f"Installed dashboard from {json_file} in folder ID {folder_id}")
 
 
-def setup_grafna_session(args):
+def setup_grafana_session(args):
     global GRAFANA_URL
     global GRAFANA_SESSION
-    GRAFANA_URL = args.config['grafana_url'].rstrip('/')
+    
+    default_token = 'REPLACE_ME_WITH_ADMIN_SERVICE_ACCONT_TOKEN'
+    instructions_url = "https://grafana.com/docs/grafana/latest/administration/service-accounts/#to-create-a-service-account"
+    
     token = args.config['token']
+    if token == default_token:
+        print(f'ERR: No grafana service account token found in {CONFIG_FILE}\n')
+        print("Please follow the instructions at the below URL to:")
+        print("  1) in grafana, generate an admin capable service account")
+        print("  2) in grafana, generate an admin capable token in that service account")
+        print(f"  3) add the token to the config file {CONFIG_FILE}")
+        print("  4) re-run this script with --grafana")
+        print()
+        print(f"  {instructions_url}")
+        sys.exit(1)
+    
+    GRAFANA_URL = args.config['grafana_url'].rstrip('/')
 
     # Set up HTTP GRAFANA_SESSION with auth header
     GRAFANA_SESSION = rq.Session()
@@ -151,7 +169,7 @@ def setup_grafna_session(args):
 
 def install_grafana_dashboards(args):
     """
-    Installs Grafana dashboards from ../5.1/*.json and ../5.0/*.json into:
+    Installs Grafana dashboards from 5.1/*.json and 5.0/*.json into:
       - Hammerspace 5.1 and later
       - Hammerspace 5.0
     respectively. If a dashboard already exists, prompts to delete before reinstalling.
@@ -162,11 +180,12 @@ def install_grafana_dashboards(args):
     folder_51_id = get_or_create_folder("Hammerspace 5.1 and later")
     folder_50_id = get_or_create_folder("Hammerspace 5.0")
 
+    script_path = str(pathlib.Path(__file__).absolute().parent.parent)
     # 1) Install dashboards in Hammerspace 5.1 and later
-    install_dashboards_from_path(args, folder_51_id, "../5.1/*.json")
+    install_dashboards_from_path(args, folder_51_id, os.path.join(script_path, "5.1", "*.json"))
 
     # 2) Install dashboards in Hammerspace 5.0
-    install_dashboards_from_path(args, folder_50_id, "../5.0/*.json")
+    install_dashboards_from_path(args, folder_50_id, os.path.join(script_path, "5.0", "*.json"))
 
     print("All dashboards have been processed.")
 
@@ -198,7 +217,7 @@ def setup_prometheus_datasource_in_grafana(args):
 
     if resp.status_code == 200:
         # The datasource already exists, do nothing
-        print(f"Grafna datasource '{args.datasource_name}' already exists, not modifying")
+        print(f"Grafana datasource '{args.datasource_name}' already exists, not modifying")
     elif resp.status_code == 404:
         # The datasource does not exist; create it
         create_url = f"{args.config['grafana_url']}/api/datasources"
@@ -429,7 +448,7 @@ class ClusterInfo(object):
 
 def build_prometheus_config(args):
     clusters = []
-    for anvil_ip in args.config['cluster_ips']:
+    for anvil_ip in args.config['clusters']:
         asm = AnvilSM()
         asm.auth_creds(anvil_ip)
         nodes = asm.get_nodes()
@@ -457,9 +476,9 @@ def build_prometheus_config(args):
     prom_config['alerting'] = {
         'alertmanagers': [{'static_configs': [{'targets': ['localhost:9093']}]}]}
     prom_config['global'] = {
-        'evaluation_interval': '15s',
+        'evaluation_interval': '60s',
         'external_labels': {'monitor': 'example'},
-        'scrape_interval': '15s',
+        'scrape_interval': '60s',
     }
     prom_config['rule_files'] = ['/etc/prometheus/rules.d/default.rules.yml']
 
@@ -468,7 +487,7 @@ def build_prometheus_config(args):
     scr_conf.append(
         {
             'job_name': 'prometheus',
-            'fallback_scrape_protocol':'PrometheusProto',
+            'fallback_scrape_protocol':'PrometheusText0.0.4',
             'static_configs': [
                 {'labels': {'node_type': 'prometheus'}},
                 {'targets': ['localhost:9090']}
@@ -497,7 +516,7 @@ def build_prometheus_config(args):
                 'targets': cluster_targets, })
     job = {
         'job_name': 'cluster',
-        'fallback_scrape_protocol': 'PrometheusProto',
+        'fallback_scrape_protocol': 'PrometheusText0.0.4',
         'static_configs': static_configs,
         }
     scr_conf.append(job)
@@ -526,7 +545,7 @@ def build_prometheus_config(args):
 
     job = {
         'job_name': 'anvil_nodes',
-        'fallback_scrape_protocol': 'PrometheusProto',
+        'fallback_scrape_protocol': 'PrometheusText0.0.4',
         'static_configs': static_configs,
         }
     scr_conf.append(job)
@@ -556,7 +575,7 @@ def build_prometheus_config(args):
 
     job = {
         'job_name': 'dsx_nodes',
-        'fallback_scrape_protocol': 'PrometheusProto',
+        'fallback_scrape_protocol': 'PrometheusText0.0.4',
         'static_configs': static_configs,
         }
     scr_conf.append(job)
@@ -586,7 +605,7 @@ def get_config():
         'grafana_url': 'http://localhost:3000',
         'prometheus_url': 'http://localhost:9090',
     }
-    config['cluster_ips'] = {
+    config['clusters'] = {
         'hammerspace1': '1.1.1.1',
         'hammerspace2': '1.1.2.1',
         'comment1': "To configure more than one hammerspace cluster, add multiple hammerspace* entries to this section",
@@ -594,66 +613,54 @@ def get_config():
     }
 
     if not CONFIG_FILE.is_file():
-        print(f'WARN: {CONFIG_FILE} not found, generating')
+        print(f'{CONFIG_FILE} not found, generating')
         with CONFIG_FILE.open('w') as fd:
             config.write(fd)
 
     config = configparser.ConfigParser()
     config.read(CONFIG_FILE)
 
-    if config['grafana_service_account']['token'] == default_token:
-        print(f'ERR: No grafana service account token found in {CONFIG_FILE}\n')
-        print("Please follow the instructions at the below URL to:")
-        print("  1) in grafana, generate an admin capable service account")
-        print("  2) in grafana, generate an admin capable token in that service account")
-        print(f"  3) add the token to the config file {CONFIG_FILE}")
-        print("  4) re-run this script")
-        print()
-        print(f"  {instructions_url}")
-        sys.exit(1)
+    # Token validation moved to setup_grafana_session() where it's actually needed
 
     clusters = []
-    for k in config['cluster_ips'].keys():
+    for k in config['clusters'].keys():
         if k.lower().startswith('hammerspace'):
-            clusters.append(config['cluster_ips'][k])
+            clusters.append(config['clusters'][k])
     ret_config = {
         'token': config['grafana_service_account']['token'],
         'grafana_url': config['hosts']['grafana_url'],
         'prom_url': config['hosts']['prometheus_url'],
-        'cluster_ips': clusters,
+        'clusters': clusters,
     }
     return ret_config
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('-d', '--dashboards', action='store_true', help="delete grafana dashboards already installed and then install, attaching each to the prometheus data source")
-    p.add_argument('-f', '--force', action='store_true', help="Don't prompt about deleting existing grafana dashboards")
-    p.add_argument('-p', '--prometheus', action='store_true', help=f"configure prometheus to collect from the cluster(s) specified in {CONFIG_FILE}")
-    p.add_argument('-s', '--sample_config', action='store_true', help=f'Generate a sample config.py config file at {CONFIG_FILE}')
+    p.add_argument('--create-config-ini', action='store_true', help=f'Step 1: Generate a config file at {CONFIG_FILE}')
+    p.add_argument('--prometheus', action='store_true', help=f'Step 2: Generate prometheus.yml from cluster(s) in {CONFIG_FILE}')
+    p.add_argument('--grafana', action='store_true', help='Step 3: Setup Grafana datasource and install dashboards')
+    p.add_argument('-f', '--force', action='store_true', help="Don't prompt about overwriting existing grafana dashboards")
 
     args = p.parse_args()
     args.datasource_name = "Prometheus"
+    args.prometheus_output = 'prometheus.yml'
 
-    if not CONFIG_FILE.is_file():
-        args.sample_config = True
-
-    if args.sample_config:
+    if args.create_config_ini:
         if CONFIG_FILE.is_file():
-            p.exit(f'ERROR: Not overwriting existing config file {CONFIG_FILE} with a new sample config file')
+            p.exit(f'ERROR: Not overwriting existing config file {CONFIG_FILE}')
         args.config = get_config()
         p.exit()
 
     args.config = get_config()
-    args.prometheus_output = 'prometheus.yml'
-
-    if args.dashboards:
-        setup_grafna_session(args)
-        setup_prometheus_datasource_in_grafana(args)
-        install_grafana_dashboards(args)
 
     if args.prometheus:
         build_prometheus_config(args)
+
+    if args.grafana:
+        setup_grafana_session(args)
+        setup_prometheus_datasource_in_grafana(args)
+        install_grafana_dashboards(args)
 
 
 if __name__ == '__main__':
