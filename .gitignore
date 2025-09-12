@@ -1,5 +1,5 @@
-installers/config_tooling.ini
-installers/prometheus.yml
+config_tooling.ini
+prometheus.yml
 *.swp
 *.swo
 .idea
