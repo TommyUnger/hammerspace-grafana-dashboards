@@ -95,6 +95,30 @@ def install_dashboards_from_path(args, folder_id, path_glob):
         else:
             dashboard_json = raw_dashboard
 
+        # Replace ${DS_PROMETHEUS} variables with the actual datasource UID
+        # This is necessary when using /api/dashboards/db instead of /api/dashboards/import
+        dashboard_str = json.dumps(dashboard_json)
+        dashboard_str = dashboard_str.replace('${DS_PROMETHEUS}', GRAFANA_PROMETHEUS_UID)
+        dashboard_json = json.loads(dashboard_str)
+
+        # Remove __inputs section if present (not needed with /api/dashboards/db)
+        if '__inputs' in dashboard_json:
+            del dashboard_json['__inputs']
+
+        # Update templating variable if it exists
+        if 'templating' in dashboard_json and 'list' in dashboard_json['templating']:
+            for var in dashboard_json['templating']['list']:
+                if var.get('name') == 'DS_PROMETHEUS':
+                    # Convert the template variable to use the specific datasource
+                    var['current'] = {
+                        'selected': True,
+                        'text': args.datasource_name,
+                        'value': GRAFANA_PROMETHEUS_UID
+                    }
+                    var['hide'] = 2  # Hide variable from UI
+                    var['query'] = GRAFANA_PROMETHEUS_UID
+                    var['type'] = 'datasource'
+
         # Make sure there's a UID
         uid = dashboard_json.get('uid')
         print(f"Setting up dashboard: {dashboard_json.get('title')}")
@@ -115,22 +139,12 @@ def install_dashboards_from_path(args, folder_id, path_glob):
                 continue
 
         # Now upload (create or update) the dashboard
-        post_url = f"{GRAFANA_URL}/api/dashboards/import"
+        post_url = f"{GRAFANA_URL}/api/dashboards/db"
         payload = {
             "dashboard": dashboard_json,
             "folderId": folder_id,
-            "overwrite": True,
-            # Use inputs to specify the value of, this doesn't seem to work :(
-            # See the forcing function above for the variables in the templating section
-            "inputs": [
-                {
-                    "name": "DS_PROMETHEUS",
-                    "type": "datasource",
-                    "pluginId": "prometheus",
-                    "value": GRAFANA_PROMETHEUS_UID,
-                }]
+            "overwrite": True
         }
-        # print(f"Posting data: {payload.get('folderId')} {payload.get('inputs')}")
         resp = GRAFANA_SESSION.post(post_url, data=json.dumps(payload))
         if resp.status_code not in (200, 202):  # Typically 200 OK or 202 Accepted
             print(f"Error installing dashboard from {json_file}: {resp.text}")
@@ -141,10 +155,10 @@ def install_dashboards_from_path(args, folder_id, path_glob):
 def setup_grafana_session(args):
     global GRAFANA_URL
     global GRAFANA_SESSION
-    
+
     default_token = 'REPLACE_ME_WITH_ADMIN_SERVICE_ACCONT_TOKEN'
     instructions_url = "https://grafana.com/docs/grafana/latest/administration/service-accounts/#to-create-a-service-account"
-    
+
     token = args.config['token']
     if token == default_token:
         print(f'ERR: No grafana service account token found in {CONFIG_FILE}\n')
@@ -156,7 +170,7 @@ def setup_grafana_session(args):
         print()
         print(f"  {instructions_url}")
         sys.exit(1)
-    
+
     GRAFANA_URL = args.config['grafana_url'].rstrip('/')
 
     # Set up HTTP GRAFANA_SESSION with auth header
@@ -165,6 +179,46 @@ def setup_grafana_session(args):
         'Authorization': f'Bearer {token}',
         'Content-Type': 'application/json'
     })
+
+    # Test the connection to detect SSL/protocol mismatches
+    test_url = f"{GRAFANA_URL}/api/health"
+    try:
+        resp = GRAFANA_SESSION.get(test_url)
+        # Even if we get a 401 (auth issue), the connection itself worked
+        if resp.status_code not in (200, 401):
+            print(f"Warning: Grafana health check returned status {resp.status_code}")
+    except rq.exceptions.SSLError as e:
+        print(f"\nERROR: SSL/Protocol mismatch connecting to Grafana at {GRAFANA_URL}")
+        print(f"\nThis usually happens when the URL protocol doesn't match Grafana's configuration:")
+        print(f"  - If you specified https:// but Grafana uses HTTP, change to http://")
+        print(f"  - If you specified http:// but Grafana uses HTTPS, change to https://")
+        print(f"\nPlease update the grafana_url in {CONFIG_FILE}")
+        print(f"Current URL: {GRAFANA_URL}")
+        sys.exit(1)
+    except rq.exceptions.ConnectionError as e:
+        print(f"\nERROR: Cannot connect to Grafana at {GRAFANA_URL}")
+        print(f"\nPlease verify:")
+        print(f"  1. Grafana is running")
+        print(f"  2. The URL and port are correct in {CONFIG_FILE}")
+        print(f"  3. No firewall is blocking the connection")
+        sys.exit(1)
+
+    # Verify the token has admin permissions
+    auth_url = f"{GRAFANA_URL}/api/org/users"
+    try:
+        resp = GRAFANA_SESSION.get(auth_url)
+        if resp.status_code == 401:
+            print(f"\nERROR: Authentication failed - invalid token")
+            print(f"Please verify the service account token in {CONFIG_FILE}")
+            sys.exit(1)
+        elif resp.status_code == 403:
+            print(f"\nERROR: Token does not valid or does not have admin permissions")
+            print(f"Please verify and/or regenerate the service account token in {CONFIG_FILE}")
+            sys.exit(1)
+        elif resp.status_code != 200:
+            print(f"Warning: Could not verify admin permissions (status {resp.status_code})")
+    except Exception as e:
+        print(f"Warning: Could not verify permissions: {e}")
 
 
 def install_grafana_dashboards(args):
@@ -231,7 +285,48 @@ def setup_prometheus_datasource_in_grafana(args):
         print(f"Error checking existing datasource: {resp.status_code} - {resp.text}")
 
     resp = GRAFANA_SESSION.get(get_url)
-    GRAFANA_PROMETHEUS_UID = resp.json()['uid']
+    if resp.status_code == 200:
+        GRAFANA_PROMETHEUS_UID = resp.json()['uid']
+    else:
+        print(f"ERROR: Could not retrieve datasource UID. Status: {resp.status_code}")
+        sys.exit(1)
+
+    # Test that the Prometheus datasource is actually working
+    print("Testing Prometheus datasource connectivity...")
+    query_url = f"{GRAFANA_URL}/api/datasources/proxy/uid/{GRAFANA_PROMETHEUS_UID}/api/v1/query"
+    test_query = {"query": "up"}  # Simple query to check if Prometheus has any metrics
+
+    try:
+        resp = GRAFANA_SESSION.get(query_url, params=test_query)
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get('status') == 'success':
+                metric_count = len(result.get('data', {}).get('result', []))
+                if metric_count > 0:
+                    print(f"✓ Prometheus datasource is working ({metric_count} targets found)")
+                else:
+                    print("WARNING: Prometheus datasource is reachable but has no 'up' metrics")
+                    print("This might indicate Prometheus is not scraping any targets yet")
+                    choice = input("Continue anyway? [y/N]: ").strip().lower()
+                    if not choice.startswith('y'):
+                        print("Aborting dashboard installation")
+                        sys.exit(1)
+            else:
+                print(f"ERROR: Prometheus query failed: {result.get('error', 'Unknown error')}")
+                sys.exit(1)
+        elif resp.status_code == 502 or resp.status_code == 503:
+            print(f"ERROR: Cannot reach Prometheus at http://localhost:9090")
+            print("Please verify:")
+            print("  1. Prometheus is running on localhost:9090")
+            print("  2. Prometheus is accessible from the Grafana server")
+            sys.exit(1)
+        else:
+            print(f"ERROR: Failed to test Prometheus datasource. Status: {resp.status_code}")
+            print(f"Response: {resp.text}")
+            sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Failed to test Prometheus datasource: {e}")
+        sys.exit(1)
 
 #
 # Prometheus Config Generation
@@ -476,9 +571,9 @@ def build_prometheus_config(args):
     prom_config['alerting'] = {
         'alertmanagers': [{'static_configs': [{'targets': ['localhost:9093']}]}]}
     prom_config['global'] = {
-        'evaluation_interval': '60s',
+        'evaluation_interval': '15s',
         'external_labels': {'monitor': 'example'},
-        'scrape_interval': '60s',
+        'scrape_interval': '15s',
     }
     prom_config['rule_files'] = ['/etc/prometheus/rules.d/default.rules.yml']
 
