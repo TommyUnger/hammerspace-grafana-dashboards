@@ -62,13 +62,13 @@ python installers/config.py --grafana
 
 ## Dashboard Screenshots
 
-<a href="content/drive-usage-dashboard-screenshot.png"><img src="content/drive-usage-dashboard-screenshot.png" alt="Drive Usage Dashboard" width="300"></a>
-<a href="content/client-and-protocol-usage-and-latency.png"><img src="content/client-and-protocol-usage-and-latency.png" alt="Client and Protocol Usage and Latency" width="300"></a>
-<a href="content/iops-by-node-and-op-type.png"><img src="content/iops-by-node-and-op-type.png" alt="IOPS by Node and Op Type" width="300"></a>
-<a href="content/capacity-utlization-by-share-and-system.png"><img src="content/capacity-utlization-by-share-and-system.png" alt="Capacity Utilization by Share and System" width="300"></a>
-<a href="content/capacity-percent-utilization-and-changes.png"><img src="content/capacity-percent-utilization-and-changes.png" alt="Capacity Percent Utilization and Changes" width="300"></a>
-<a href="content/cpu-utilization-network-throughput.png"><img src="content/cpu-utilization-network-throughput.png" alt="CPU Utilization Network Throughput" width="300"></a>
-<a href="content/disk-drive-ssd-health.png"><img src="content/disk-drive-ssd-health.png" alt="Disk Drive SSD Health" width="300"></a>
-<a href="content/object-s3-throughput-and-operations.png"><img src="content/object-s3-throughput-and-operations.png" alt="Object S3 Throughput and Operations" width="300"></a>
-<a href="content/power-watts-temperature-environment.png"><img src="content/power-watts-temperature-environment.png" alt="Power Watts Temperature Environment" width="300"></a>
-<a href="content/throughput-and-top-share-usage.png"><img src="content/throughput-and-top-share-usage.png" alt="Throughput and Top Share Usage" width="300"></a>
+<a href="content/drive-usage-dashboard-screenshot.png"><img src="content/drive-usage-dashboard-screenshot.png" alt="Drive Usage Dashboard" width="420"></a>
+<a href="content/client-and-protocol-usage-and-latency.png"><img src="content/client-and-protocol-usage-and-latency.png" alt="Client and Protocol Usage and Latency" width="420"></a>
+<a href="content/iops-by-node-and-op-type.png"><img src="content/iops-by-node-and-op-type.png" alt="IOPS by Node and Op Type" width="420"></a>
+<a href="content/capacity-utlization-by-share-and-system.png"><img src="content/capacity-utlization-by-share-and-system.png" alt="Capacity Utilization by Share and System" width="420"></a>
+<a href="content/capacity-percent-utilization-and-changes.png"><img src="content/capacity-percent-utilization-and-changes.png" alt="Capacity Percent Utilization and Changes" width="420"></a>
+<a href="content/cpu-utilization-network-throughput.png"><img src="content/cpu-utilization-network-throughput.png" alt="CPU Utilization Network Throughput" width="420"></a>
+<a href="content/disk-drive-ssd-health.png"><img src="content/disk-drive-ssd-health.png" alt="Disk Drive SSD Health" width="420"></a>
+<a href="content/object-s3-throughput-and-operations.png"><img src="content/object-s3-throughput-and-operations.png" alt="Object S3 Throughput and Operations" width="420"></a>
+<a href="content/power-watts-temperature-environment.png"><img src="content/power-watts-temperature-environment.png" alt="Power Watts Temperature Environment" width="420"></a>
+<a href="content/throughput-and-top-share-usage.png"><img src="content/throughput-and-top-share-usage.png" alt="Throughput and Top Share Usage" width="420"></a>
