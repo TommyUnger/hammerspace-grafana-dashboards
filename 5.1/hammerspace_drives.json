@@ -1414,12 +1414,12 @@
     "list": [
       {
         "current": {},
-        "definition": "label_values(cluster)",
+        "definition": "label_values(hammerspace_mobility_actively_moving_files,cluster)",
         "name": "cluster",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(cluster)",
+          "query": "label_values(hammerspace_mobility_actively_moving_files,cluster)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
