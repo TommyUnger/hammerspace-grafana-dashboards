@@ -543,19 +543,29 @@ class ClusterInfo(object):
 
 def build_prometheus_config(args):
     clusters = []
-    for anvil_ip in args.config['clusters']:
+    for cluster_config in args.config['clusters']:
+        # Handle both old format (string) and new format (dict with name/address)
+        if isinstance(cluster_config, dict):
+            anvil_ip = cluster_config['address']
+            config_cluster_name = cluster_config['name']
+        else:
+            # Fallback for old format
+            anvil_ip = cluster_config
+            config_cluster_name = None
+
         asm = AnvilSM()
         asm.auth_creds(anvil_ip)
         nodes = asm.get_nodes()
         cluster = asm.get_cluster()
-        clusters.append((cluster, nodes))
+        clusters.append((cluster, nodes, config_cluster_name))
 
     cinfos = []
-    for clust, nodes in clusters:
+    for clust, nodes, config_cluster_name in clusters:
         ci = ClusterInfo()
         cinfos.append(ci)
         ci.anvil_floating_ip = clust[0]['mgmtIps'][0]['address']
-        ci.cluster_name = clust[0]['name']
+        # Use config name if provided, otherwise fallback to cluster's own name
+        ci.cluster_name = config_cluster_name if config_cluster_name else clust[0]['name']
         for node in nodes:
             if ('DATA_SPHERE_PRIMARY' in node['services']
                     or 'DATA_SPHERE_SECONDARY' in node['services']):
@@ -693,18 +703,21 @@ def get_config():
     instructions_url = "https://grafana.com/docs/grafana/latest/administration/service-accounts/#to-create-a-service-account"
 
     config = configparser.ConfigParser()
-    config['grafana_service_account'] = {
-        'token': default_token
-    }
     config['hosts'] = {
         'grafana_url': 'http://localhost:3000',
         'prometheus_url': 'http://localhost:9090',
     }
     config['clusters'] = {
-        'hammerspace1': '1.1.1.1',
-        'hammerspace2': '1.1.2.1',
-        'comment1': "To configure more than one hammerspace cluster, add multiple hammerspace* entries to this section",
-        'comment2': "each pointing to the anvil cluster IP.  If only one cluster is needed remove the excess example lines",
+        'hammerspace1_name': 'Cluster1',
+        'hammerspace1_address': '1.1.1.1',
+        '; hammerspace2_name': 'Cluster2',
+        '; hammerspace2_address': '1.1.2.1',
+        '; ': "To configure more than one hammerspace cluster, add multiple hammerspace* entries to this section",
+        '; ': "Each cluster needs a _name and _address entry. If only one cluster is needed remove the excess example lines",
+        '; ': "Name will be used as the 'cluster' label on every metric in Prometheus and Grafana so make it succinct and meaningful"
+    }
+    config['grafana_service_account'] = {
+        'token': default_token
     }
 
     if not CONFIG_FILE.is_file():
@@ -718,9 +731,23 @@ def get_config():
     # Token validation moved to setup_grafana_session() where it's actually needed
 
     clusters = []
+    # Parse new format: hammerspace1_name, hammerspace1_address, etc.
+    cluster_prefixes = set()
     for k in config['clusters'].keys():
-        if k.lower().startswith('hammerspace'):
-            clusters.append(config['clusters'][k])
+        if k.lower().startswith('hammerspace') and '_' in k:
+            prefix = k.rsplit('_', 1)[0]
+            cluster_prefixes.add(prefix)
+
+    for prefix in sorted(cluster_prefixes):
+        name_key = f"{prefix}_name"
+        address_key = f"{prefix}_address"
+        if name_key in config['clusters'] and address_key in config['clusters']:
+            cluster_info = {
+                'name': config['clusters'][name_key],
+                'address': config['clusters'][address_key]
+            }
+            clusters.append(cluster_info)
+
     ret_config = {
         'token': config['grafana_service_account']['token'],
         'grafana_url': config['hosts']['grafana_url'],
