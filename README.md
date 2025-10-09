@@ -35,7 +35,10 @@ You can install Prometheus and Grafana on Windows, Linux, MacOSX, or via Docker.
 ## 3. Create and configure initial configuration file
 
 1. On your Prometheus/Grafana server, run `python installers/config.py --create-config-ini`
-2. Edit the file `installers/config_tooling.ini` and put in your Hammerspace clusters.
+2. Add your Hammerspace cluster(s): `python installers/config.py --add-cluster <cluster-ip-or-hostname> --name <short-nice-name> --username <username> --password <password>`
+   - User name and password are not required and you will be prompted if they are not provided
+   - To add multiple clusters, run this command once for each cluster
+   - To remove a cluster: `python installers/config.py --remove-cluster <cluster-ip-or-hostname>`
 3. Add your Grafana Service Account Token.
    1. http://localhost:3000/org/serviceaccounts
    2. Click "Add Service Account"
@@ -44,7 +47,7 @@ You can install Prometheus and Grafana on Windows, Linux, MacOSX, or via Docker.
    5. Click "Add service account token" button.
    6. Click "Generate Token" button.
    7. Copy the token.
-   8. Paste the token in config_tooling.ini file.
+4. Run `python installers/config.py --add-token <glsa_xxxx> --grafana-url <to override the default: http://localhost:3000> --prometheus-url  <to override the default: http://localhost:9090>` (Or edit the file directly yourself)
 
 ## 4. Configure Prometheus server/database
 

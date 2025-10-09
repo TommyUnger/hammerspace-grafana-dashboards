@@ -16,9 +16,38 @@ import getpass
 import yaml
 import urllib3
 import requests as rq
+import ipaddress
 
 # Don't complain about self signed certs when connecting to the anvil
 urllib3.disable_warnings()
+
+#
+# IPv6 address handling utilities
+#
+
+def format_ip_port(ip, port):
+    """Format IP:port, wrapping IPv6 addresses in brackets"""
+    try:
+        addr = ipaddress.ip_address(ip)
+        if isinstance(addr, ipaddress.IPv6Address):
+            return f'[{ip}]:{port}'
+        else:
+            return f'{ip}:{port}'
+    except ValueError:
+        # Not a valid IP, might be hostname
+        return f'{ip}:{port}'
+
+def format_url_host(host):
+    """Format host for URL, wrapping IPv6 addresses in brackets"""
+    try:
+        addr = ipaddress.ip_address(host)
+        if isinstance(addr, ipaddress.IPv6Address):
+            return f'[{host}]'
+        else:
+            return host
+    except ValueError:
+        # Not a valid IP, might be hostname/FQDN
+        return host
 
 #
 # Grafana dashboard setup and config
@@ -368,7 +397,7 @@ class AnvilSM(object):
 
     def auth_creds(self, url, user=None, passwd=None):
         if not url.startswith('http'):
-            url = 'https://' + url
+            url = 'https://' + format_url_host(url)
         self.set_base_url(url)
         self.session = rq.Session()
         self.session.verify = self.ssl_verify
@@ -610,7 +639,7 @@ def build_prometheus_config(args):
                 ('protod_exporter', '9102'),
                 ('filesystem_exporter', '9103'),
                 ]:
-            cluster_targets.append(f'{ci.anvil_floating_ip}:{port}')
+            cluster_targets.append(format_ip_port(ci.anvil_floating_ip, port))
 
         static_configs.append({
                 'labels': {
@@ -636,7 +665,7 @@ def build_prometheus_config(args):
             for exporter, port in [
                     ('prometheus_exporter', '9100'),
                     ]:
-                anvil_targets.append(f'{anvilip}:{port}')
+                anvil_targets.append(format_ip_port(anvilip, port))
 
             static_config = {
                 'labels': {
@@ -666,7 +695,7 @@ def build_prometheus_config(args):
                     ('prometheus_exporter', '9100'),
                     ('cloud_mover_exporter', '9105'),
                     ]:
-                dsx_targets.append(f'{dsxip}:{port}')
+                dsx_targets.append(format_ip_port(dsxip, port))
 
             static_config = {
                 'labels': {
@@ -708,10 +737,8 @@ def get_config():
         'prometheus_url': 'http://localhost:9090',
     }
     config['clusters'] = {
-        'hammerspace1_name': 'Cluster1',
-        'hammerspace1_address': '1.1.1.1',
-        '; hammerspace2_name': 'Cluster2',
-        '; hammerspace2_address': '1.1.2.1',
+        '; hammerspace1_name': 'Cluster1',
+        '; hammerspace1_address': '1.1.1.1',
         '; ': "To configure more than one hammerspace cluster, add multiple hammerspace* entries to this section",
         '; ': "Each cluster needs a _name and _address entry. If only one cluster is needed remove the excess example lines",
         '; ': "Name will be used as the 'cluster' label on every metric in Prometheus and Grafana so make it succinct and meaningful"
@@ -757,9 +784,175 @@ def get_config():
     return ret_config
 
 
+def add_cluster(cluster_address, name=None, username=None, password=None):
+    """Add a new cluster to the config file"""
+    if not CONFIG_FILE.is_file():
+        print(f'Config file not found, creating {CONFIG_FILE}...')
+        # Create the config file by calling get_config which handles creation
+        get_config()
+
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
+
+    # Check if this address already exists
+    for key in config['clusters'].keys():
+        if key.lower().endswith('_address') and config['clusters'][key] == cluster_address:
+            prefix = key.rsplit('_', 1)[0]
+            name_key = f"{prefix}_name"
+            existing_name = config['clusters'].get(name_key, 'Unknown')
+            print(f'ERROR: Cluster at {cluster_address} already exists as "{existing_name}"')
+            print(f'To update, first remove it with: --remove-cluster {cluster_address}')
+            sys.exit(1)
+
+    # Connect to the cluster to get its name (if not provided)
+    if name:
+        cluster_name = name
+        print(f'Using provided cluster name: "{cluster_name}"')
+        print(f'Connecting to Hammerspace cluster at {cluster_address} to verify...')
+        asm = AnvilSM()
+        asm.auth_creds(cluster_address, user=username, passwd=password)
+        print(f'Successfully connected to cluster at {cluster_address}')
+    else:
+        print(f'Connecting to Hammerspace cluster at {cluster_address}...')
+        asm = AnvilSM()
+        asm.auth_creds(cluster_address, user=username, passwd=password)
+        cluster_info = asm.get_cluster()
+        cluster_name = cluster_info[0]['name']
+        print(f'Successfully connected to cluster "{cluster_name}"')
+
+    # Find the next available hammerspace number
+    cluster_nums = []
+    for key in config['clusters'].keys():
+        if key.lower().startswith('hammerspace') and '_' in key:
+            try:
+                num = int(key.split('hammerspace')[1].split('_')[0])
+                cluster_nums.append(num)
+            except (ValueError, IndexError):
+                pass
+
+    next_num = max(cluster_nums) + 1 if cluster_nums else 1
+
+    # Add the cluster
+    name_key = f'hammerspace{next_num}_name'
+    address_key = f'hammerspace{next_num}_address'
+
+    config['clusters'][name_key] = cluster_name
+    config['clusters'][address_key] = cluster_address
+
+    with CONFIG_FILE.open('w') as fd:
+        config.write(fd)
+
+    print(f'Successfully added cluster "{cluster_name}" at {cluster_address}')
+
+
+def remove_cluster(cluster_address):
+    """Remove a cluster from the config file by its address"""
+    if not CONFIG_FILE.is_file():
+        print(f'ERROR: Config file {CONFIG_FILE} not found.')
+        sys.exit(1)
+
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
+
+    # Find the cluster with matching address
+    found = False
+    prefix_to_remove = None
+    cluster_name = None
+
+    for key in config['clusters'].keys():
+        if key.lower().endswith('_address') and config['clusters'][key] == cluster_address:
+            prefix_to_remove = key.rsplit('_', 1)[0]
+            name_key = f"{prefix_to_remove}_name"
+            if name_key in config['clusters']:
+                cluster_name = config['clusters'][name_key]
+            found = True
+            break
+
+    if not found:
+        print(f'ERROR: No cluster found with address {cluster_address}')
+        sys.exit(1)
+
+    # Remove both name and address keys
+    name_key = f"{prefix_to_remove}_name"
+    address_key = f"{prefix_to_remove}_address"
+
+    if name_key in config['clusters']:
+        del config['clusters'][name_key]
+    if address_key in config['clusters']:
+        del config['clusters'][address_key]
+
+    with CONFIG_FILE.open('w') as fd:
+        config.write(fd)
+
+    cluster_desc = f'"{cluster_name}" at {cluster_address}' if cluster_name else cluster_address
+    print(f'Successfully removed cluster {cluster_desc}')
+
+
+def add_token(token):
+    """Add Grafana service account token to the config file"""
+    if not CONFIG_FILE.is_file():
+        print(f'Config file not found, creating {CONFIG_FILE}...')
+        get_config()
+
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
+
+    # Update the token
+    config['grafana_service_account']['token'] = token
+
+    with CONFIG_FILE.open('w') as fd:
+        config.write(fd)
+
+    print(f'Successfully added Grafana service account token to {CONFIG_FILE}')
+
+
+def set_grafana_url(url):
+    """Set Grafana URL in the config file"""
+    if not CONFIG_FILE.is_file():
+        print(f'Config file not found, creating {CONFIG_FILE}...')
+        get_config()
+
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
+
+    # Update the Grafana URL
+    config['hosts']['grafana_url'] = url
+
+    with CONFIG_FILE.open('w') as fd:
+        config.write(fd)
+
+    print(f'Successfully set Grafana URL to {url} in {CONFIG_FILE}')
+
+
+def set_prometheus_url(url):
+    """Set Prometheus URL in the config file"""
+    if not CONFIG_FILE.is_file():
+        print(f'Config file not found, creating {CONFIG_FILE}...')
+        get_config()
+
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
+
+    # Update the Prometheus URL
+    config['hosts']['prometheus_url'] = url
+
+    with CONFIG_FILE.open('w') as fd:
+        config.write(fd)
+
+    print(f'Successfully set Prometheus URL to {url} in {CONFIG_FILE}')
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--create-config-ini', action='store_true', help=f'Step 1: Generate a config file at {CONFIG_FILE}')
+    p.add_argument('--add-cluster', metavar='<cluster-ip-or-hostname>', help=f'Add a cluster to {CONFIG_FILE}')
+    p.add_argument('--name', metavar='<short-nice-name>', help='Optional cluster name to use instead of fetching from cluster')
+    p.add_argument('--username', metavar='<admin-username>', help='Admin username for cluster authentication (optional, will prompt if not provided)')
+    p.add_argument('--password', metavar='<admin-password>', help='Admin password for cluster authentication (optional, will prompt if not provided)')
+    p.add_argument('--remove-cluster', metavar='<cluster-ip-or-hostname>', help=f'Remove a cluster from {CONFIG_FILE}')
+    p.add_argument('--add-token', metavar='<grafana-service-account-token>', help=f'Add Grafana service account token to {CONFIG_FILE}')
+    p.add_argument('--grafana-url', metavar='<url>', help=f'Set Grafana URL in {CONFIG_FILE}')
+    p.add_argument('--prometheus-url', metavar='<url>', help=f'Set Prometheus URL in {CONFIG_FILE}')
     p.add_argument('--prometheus', action='store_true', help=f'Step 2: Generate prometheus.yml from cluster(s) in {CONFIG_FILE}')
     p.add_argument('--grafana', action='store_true', help='Step 3: Setup Grafana datasource and install dashboards')
     p.add_argument('-f', '--force', action='store_true', help="Don't prompt about overwriting existing grafana dashboards")
@@ -768,12 +961,40 @@ def main():
     args.datasource_name = "Prometheus"
     args.prometheus_output = 'prometheus.yml'
 
+    # Track if any configuration commands are run
+    config_command_run = False
+
     if args.create_config_ini:
         if CONFIG_FILE.is_file():
             p.exit(f'ERROR: Not overwriting existing config file {CONFIG_FILE}')
         args.config = get_config()
+        config_command_run = True
+
+    if args.add_cluster:
+        add_cluster(args.add_cluster, name=args.name, username=args.username, password=args.password)
+        config_command_run = True
+
+    if args.remove_cluster:
+        remove_cluster(args.remove_cluster)
+        config_command_run = True
+
+    if args.add_token:
+        add_token(args.add_token)
+        config_command_run = True
+
+    if args.grafana_url:
+        set_grafana_url(args.grafana_url)
+        config_command_run = True
+
+    if args.prometheus_url:
+        set_prometheus_url(args.prometheus_url)
+        config_command_run = True
+
+    # If any config commands were run, exit now
+    if config_command_run:
         p.exit()
 
+    # Otherwise, proceed with prometheus/grafana operations
     args.config = get_config()
 
     if args.prometheus:
